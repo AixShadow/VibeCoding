@@ -2,49 +2,19 @@
 #include <string>
 #include <vector>
 #include <sstream>
-#include "PieceTable.cpp"
+#include "TextRender.cpp"
 
 
 // ---------------- Unit Tests ----------------
-std::string run_tests() {
-    std::ostringstream oss;
-    auto check = [&](const std::string& name, const std::string& got, const std::string& expect) {
-        if (got == expect) {
-            oss << name << ": PASS\n";
-        } else {
-            oss << name << ": FAIL (got=\"" << got << "\", expect=\"" << expect << "\")\n";
-        }
-    };
-
-    PieceTable pt;
-    pt.insert(0, "Hello");
-    check("Insert in Empty", pt.get_text(), "Hello");
-
-    pt.insert(5, " World");
-    check("Insert in Mid", pt.get_text(), "Hello World");
-
-    pt.erase(0, 5);
-    check("Delete the Beginning", pt.get_text(), " World");
-
-    pt.insert(0, "Hi");
-    check("Mixed Insertion", pt.get_text(), "Hi World");
-
-    pt.erase(2, 1);
-    check("Delete the Mid", pt.get_text(), "HiWorld");
-
-    pt.erase(5, 1);
-    check("Delete the End", pt.get_text(), "HiWord");
-
-    return oss.str();
-}
-
-// ---------------- Win32 GUI ----------------
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    static std::string test_results;
+    static PieceTable table;
+    static TextRenderer renderer;
     switch (msg) {
     case WM_CREATE:
-        test_results = run_tests();
-        MessageBoxA(hwnd, test_results.c_str(), "Test Result", MB_OK);
+        table.insert(0, "This is a simple test of the TextRenderer class."
+                        "It should automatically wrap words when they exceed the maximum width."
+                        "HereIsAVeryLongWordThatShouldBeSplitAcrossLinesAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA."
+                        "Also test spaces and\nexplicit newlines.");
         return 0;
     case WM_PAINT: {
         PAINTSTRUCT ps;
@@ -52,8 +22,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         RECT rect;
         GetClientRect(hwnd, &rect);
         SetBkMode(hdc, TRANSPARENT);
-        DrawTextA(hdc, test_results.c_str(), -1, &rect,
-                  DT_LEFT | DT_TOP | DT_WORDBREAK);
+        renderer.Draw(hdc, table, 10, 10, rect.right - 20);
         EndPaint(hwnd, &ps);
         return 0;
     }
@@ -65,7 +34,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 }
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
-    static TCHAR CLASS_NAME[] = TEXT("PieceTableWinClass");
+    const char CLASS_NAME[] = "TextRendererWinClass";
     WNDCLASS wc = {};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInstance;
@@ -75,9 +44,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     RegisterClass(&wc);
 
     HWND hwnd = CreateWindowEx(
-        0, CLASS_NAME, "Piece Table Unit Tests",
+        0, CLASS_NAME, "TextRenderer Demo",
         WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
-        600, 400, nullptr, nullptr, hInstance, nullptr);
+        800, 600, nullptr, nullptr, hInstance, nullptr);
 
     ShowWindow(hwnd, nCmdShow);
 
