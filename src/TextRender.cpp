@@ -24,14 +24,15 @@ class TextRenderer {
                     continue;
                 }
                 if (curX + w > x + maxWidth) {
+                    // 换行
+                    curX = x;
+                    curY += lineHeight;
                     if (w > maxWidth) {
-                        draw_long_word(hdc, word, curX, curY, x, maxWidth, lineHeight);
-                        continue; // curX 和 curY 已在函数内部更新
-                    }  else{
-                        // 换行
+                        draw_long_word(hdc, word, curX, curY,  maxWidth, lineHeight);
                         curX = x;
                         curY += lineHeight;
-                    }
+                        continue;
+                    } 
                 }
                               
                 TextOutA(hdc, curX, curY, word.c_str(), (int)word.size());
@@ -86,58 +87,58 @@ class TextRenderer {
             return tm.tmHeight + tm.tmExternalLeading;
         }
     
-        // void draw_long_word(HDC hdc, const std::string& word, int x, int y, int maxWidth, int lineHeight) {
-        //     int start = 0;
-        //     while (start < (int)word.size()) {
-        //         int end = start + 1;
-        //         int lastFit = start;
-        //         while (end <= (int)word.size()) {
-        //             SIZE sz;
-        //             GetTextExtentPoint32A(hdc, word.c_str() + start, end - start, &sz);
-        //             if (x + sz.cx > x + maxWidth) break;
-        //             lastFit = end;
-        //             ++end;
-        //         }
-        //         if (lastFit == start) lastFit = start + 1; // 至少绘制一个字符
-        //         TextOutA(hdc, x, y, word.c_str() + start, lastFit - start);
-        //         start = lastFit;
-        //         y += lineHeight;
-        //     }
-        // }
-
-        void draw_long_word(HDC hdc, const std::string& word,
-            int& curX, int& curY,
-            int xStart, int maxWidth, int lineHeight) {
+        void draw_long_word(HDC hdc, const std::string& word, int x, int y, int maxWidth, int lineHeight) {
             int start = 0;
             while (start < (int)word.size()) {
                 int end = start + 1;
                 int lastFit = start;
-                int remainingWidth = xStart + maxWidth - curX;
-
-                // 在当前行剩余宽度内尽量放下更多字符
                 while (end <= (int)word.size()) {
                     SIZE sz;
                     GetTextExtentPoint32A(hdc, word.c_str() + start, end - start, &sz);
-                    if (sz.cx > remainingWidth) break;
+                    if (x + sz.cx > x + maxWidth) break;
                     lastFit = end;
                     ++end;
                 }
-
                 if (lastFit == start) lastFit = start + 1; // 至少绘制一个字符
-
-                SIZE sz;
-                GetTextExtentPoint32A(hdc, word.c_str() + start, lastFit - start, &sz);
-                TextOutA(hdc, curX, curY, word.c_str() + start, lastFit - start);
-
-                curX += sz.cx;
+                TextOutA(hdc, x, y, word.c_str() + start, lastFit - start);
                 start = lastFit;
-
-                // 如果还有剩余字符，换行
-                if (start < (int)word.size()) {
-                    curY += lineHeight;
-                    curX = xStart;
-                }
+                y += lineHeight;
             }
         }
+
+        // void draw_long_word(HDC hdc, const std::string& word,
+        //     int& curX, int& curY,
+        //     int xStart, int maxWidth, int lineHeight) {
+        //     int start = 0;
+        //     while (start < (int)word.size()) {
+        //         int end = start + 1;
+        //         int lastFit = start;
+        //         int remainingWidth = xStart + maxWidth - curX;
+
+        //         // 在当前行剩余宽度内尽量放下更多字符
+        //         while (end <= (int)word.size()) {
+        //             SIZE sz;
+        //             GetTextExtentPoint32A(hdc, word.c_str() + start, end - start, &sz);
+        //             if (sz.cx > remainingWidth) break;
+        //             lastFit = end;
+        //             ++end;
+        //         }
+
+        //         if (lastFit == start) lastFit = start + 1; // 至少绘制一个字符
+
+        //         SIZE sz;
+        //         GetTextExtentPoint32A(hdc, word.c_str() + start, lastFit - start, &sz);
+        //         TextOutA(hdc, curX, curY, word.c_str() + start, lastFit - start);
+
+        //         curX += sz.cx;
+        //         start = lastFit;
+
+        //         // 如果还有剩余字符，换行
+        //         if (start < (int)word.size()) {
+        //             curY += lineHeight;
+        //             curX = xStart;
+        //         }
+        //     }
+        // }
 
     };
