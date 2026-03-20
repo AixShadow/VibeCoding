@@ -38,6 +38,181 @@ class TextRenderer {
                 curX += w;
             }
         }
+
+        int GetLineHeight(HDC hdc) {
+            return get_line_height(hdc);
+        }
+
+        POINT GetCursorCoordinate(HDC hdc, const PieceTable& table, int x, int y, int maxWidth, int cursorPos) {
+            std::string text = table.get_text();
+            std::vector<std::string> words = split_words(text);
+            
+            int curX = x;
+            int curY = y;
+            int lineHeight = get_line_height(hdc);
+            int currentPos = 0;
+
+            if (cursorPos <= 0) return {curX, curY};
+
+            for (const auto& word : words) {
+                int wordLen = (int)word.size();
+                int w = measure_word(hdc, word);
+
+                if (word == "\n") {
+                    if (cursorPos <= currentPos) return {curX, curY};
+                    curX = x;
+                    curY += lineHeight;
+                    currentPos += wordLen;
+                    if (cursorPos == currentPos) return {curX, curY};
+                    continue;
+                }
+
+                if (curX + w > x + maxWidth) {
+                    if (w > maxWidth) {
+                        int start = 0;
+                        while (start < wordLen) {
+                            int end = start + 1;
+                            int lastFit = start;
+                            int remainingWidth = x + maxWidth - curX;
+
+                            while (end <= wordLen) {
+                                SIZE sz;
+                                GetTextExtentPoint32A(hdc, word.c_str() + start, end - start, &sz);
+                                if (sz.cx > remainingWidth) break;
+                                lastFit = end;
+                                ++end;
+                            }
+
+                            if (lastFit == start) lastFit = start + 1;
+
+                            if (cursorPos <= currentPos + lastFit) {
+                                SIZE sz = {0, 0};
+                                if (cursorPos - currentPos - start > 0) {
+                                    GetTextExtentPoint32A(hdc, word.c_str() + start, cursorPos - currentPos - start, &sz);
+                                }
+                                return {curX + sz.cx, curY};
+                            }
+
+                            SIZE sz;
+                            GetTextExtentPoint32A(hdc, word.c_str() + start, lastFit - start, &sz);
+                            curX += sz.cx;
+                            start = lastFit;
+
+                            if (start < wordLen) {
+                                curY += lineHeight;
+                                curX = x;
+                            }
+                        }
+                        currentPos += wordLen;
+                        if (cursorPos == currentPos) return {curX, curY};
+                        continue;
+                    } else {
+                        curX = x;
+                        curY += lineHeight;
+                    }
+                }
+
+                if (cursorPos < currentPos + wordLen) {
+                    SIZE sz = {0, 0};
+                    if (cursorPos - currentPos > 0) {
+                        GetTextExtentPoint32A(hdc, word.c_str(), cursorPos - currentPos, &sz);
+                    }
+                    return {curX + sz.cx, curY};
+                }
+
+                curX += w;
+                currentPos += wordLen;
+                if (cursorPos == currentPos) return {curX, curY};
+            }
+
+            return {curX, curY};
+        }
+
+        int GetPosFromCoordinate(HDC hdc, const PieceTable& table, int x, int y, int maxWidth, int targetX, int targetY) {
+            if (targetY < y) return 0;
+            std::string text = table.get_text();
+            std::vector<std::string> words = split_words(text);
+            
+            int curX = x;
+            int curY = y;
+            int lineHeight = get_line_height(hdc);
+            int currentPos = 0;
+
+            for (const auto& word : words) {
+                int wordLen = (int)word.size();
+                int w = measure_word(hdc, word);
+
+                if (word == "\n") {
+                    if (targetY >= curY && targetY < curY + lineHeight) return currentPos;
+                    curX = x;
+                    curY += lineHeight;
+                    currentPos += wordLen;
+                    continue;
+                }
+
+                if (curX + w > x + maxWidth) {
+                    if (w > maxWidth) {
+                        int start = 0;
+                        while (start < wordLen) {
+                            int end = start + 1;
+                            int lastFit = start;
+                            int remainingWidth = x + maxWidth - curX;
+
+                            while (end <= wordLen) {
+                                SIZE sz;
+                                GetTextExtentPoint32A(hdc, word.c_str() + start, end - start, &sz);
+                                if (sz.cx > remainingWidth) break;
+                                lastFit = end;
+                                ++end;
+                            }
+                            if (lastFit == start) lastFit = start + 1;
+                            
+                            if (targetY >= curY && targetY < curY + lineHeight) {
+                                if (targetX <= curX) return currentPos + start;
+                                for (int i = start; i < lastFit; ++i) {
+                                    SIZE sz;
+                                    GetTextExtentPoint32A(hdc, word.c_str() + start, i - start + 1, &sz);
+                                    if (curX + sz.cx > targetX) return currentPos + i;
+                                }
+                                return currentPos + lastFit;
+                            }
+
+                            SIZE sz;
+                            GetTextExtentPoint32A(hdc, word.c_str() + start, lastFit - start, &sz);
+                            curX += sz.cx;
+                            start = lastFit;
+
+                            if (start < wordLen) {
+                                curY += lineHeight;
+                                curX = x;
+                            }
+                        }
+                        currentPos += wordLen;
+                        continue;
+                    } else {
+                        if (targetY >= curY && targetY < curY + lineHeight) return currentPos;
+                        curX = x;
+                        curY += lineHeight;
+                    }
+                }
+
+                if (targetY >= curY && targetY < curY + lineHeight) {
+                    if (targetX <= curX) return currentPos;
+                    if (targetX < curX + w) {
+                        for (int i = 0; i < wordLen; ++i) {
+                            SIZE sz;
+                            GetTextExtentPoint32A(hdc, word.c_str(), i + 1, &sz);
+                            if (curX + sz.cx > targetX) return currentPos + i;
+                        }
+                    }
+                }
+
+                curX += w;
+                currentPos += wordLen;
+            }
+
+            return currentPos;
+        }
     
     private:
         std::unordered_map<std::string, int> cache;

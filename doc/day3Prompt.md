@@ -1,0 +1,1 @@
+接下来，我们需要监听 WM_KEYDOWN 和 WM_CHAR，要求算出方向键移动时光标的 X/Y 坐标，调用 CreateCaret 和 SetCaretPos。同时，正确处理键盘输入，使得正确显示输入的字符。 应该如何修改代码？
