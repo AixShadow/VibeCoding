@@ -10,6 +10,9 @@ class TextRenderer {
             std::string text = table.get_text();
             std::vector<std::string> words = split_words(text);
     
+            RECT clipBox;
+            GetClipBox(hdc, &clipBox);
+
             SIZE sz;
             int curX = x;
             int curY = y;
@@ -25,7 +28,7 @@ class TextRenderer {
                 }
                 if (curX + w > x + maxWidth) {
                     if (w > maxWidth) {
-                        draw_long_word(hdc, word, curX, curY, x, maxWidth, lineHeight);
+                        draw_long_word(hdc, word, curX, curY, x, maxWidth, lineHeight, clipBox);
                         continue; // curX 和 curY 已在函数内部更新
                     }  else{
                         // 换行
@@ -34,13 +37,73 @@ class TextRenderer {
                     }
                 }
                               
-                TextOutA(hdc, curX, curY, word.c_str(), (int)word.size());
+                if (curY + lineHeight >= clipBox.top && curY <= clipBox.bottom) {
+                    TextOutA(hdc, curX, curY, word.c_str(), (int)word.size());
+                }
                 curX += w;
             }
         }
 
         int GetLineHeight(HDC hdc) {
             return get_line_height(hdc);
+        }
+
+        int GetTotalHeight(HDC hdc, const PieceTable& table, int maxWidth) {
+            std::string text = table.get_text();
+            std::vector<std::string> words = split_words(text);
+            
+            int curX = 0;
+            int curY = 0;
+            int lineHeight = get_line_height(hdc);
+
+            for (const auto& word : words) {
+                int w = measure_word(hdc, word);
+
+                if (word == "\n") {
+                    curX = 0;
+                    curY += lineHeight;
+                    continue;
+                }
+
+                if (curX + w > maxWidth) {
+                    if (w > maxWidth) {
+                        int start = 0;
+                        while (start < (int)word.size()) {
+                            int end = start + 1;
+                            int lastFit = start;
+                            int remainingWidth = maxWidth - curX;
+
+                            while (end <= (int)word.size()) {
+                                SIZE sz;
+                                GetTextExtentPoint32A(hdc, word.c_str() + start, end - start, &sz);
+                                if (sz.cx > remainingWidth) break;
+                                lastFit = end;
+                                ++end;
+                            }
+
+                            if (lastFit == start) lastFit = start + 1;
+
+                            SIZE sz;
+                            GetTextExtentPoint32A(hdc, word.c_str() + start, lastFit - start, &sz);
+                            curX += sz.cx;
+                            start = lastFit;
+
+                            if (start < (int)word.size()) {
+                                curY += lineHeight;
+                                curX = 0;
+                            }
+                        }
+                        continue;
+                    } else {
+                        curX = 0;
+                        curY += lineHeight;
+                    }
+                }
+
+                curX += w;
+            }
+
+            return curY + lineHeight;
         }
 
         POINT GetCursorCoordinate(HDC hdc, const PieceTable& table, int x, int y, int maxWidth, int cursorPos) {
@@ -282,7 +345,7 @@ class TextRenderer {
 
         void draw_long_word(HDC hdc, const std::string& word,
             int& curX, int& curY,
-            int xStart, int maxWidth, int lineHeight) {
+            int xStart, int maxWidth, int lineHeight, const RECT& clipBox) {
             int start = 0;
             while (start < (int)word.size()) {
                 int end = start + 1;
@@ -302,7 +365,10 @@ class TextRenderer {
 
                 SIZE sz;
                 GetTextExtentPoint32A(hdc, word.c_str() + start, lastFit - start, &sz);
-                TextOutA(hdc, curX, curY, word.c_str() + start, lastFit - start);
+                
+                if (curY + lineHeight >= clipBox.top && curY <= clipBox.bottom) {
+                    TextOutA(hdc, curX, curY, word.c_str() + start, lastFit - start);
+                }
 
                 curX += sz.cx;
                 start = lastFit;

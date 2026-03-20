@@ -5,14 +5,85 @@
 #include "TextRender.cpp"
 
 
-void UpdateCaretPosition(HWND hwnd, const PieceTable& table, TextRenderer& renderer, int cursorPos) {
+void UpdateScrollInfo(HWND hwnd, const PieceTable& table, TextRenderer& renderer, int& scrollY) {
+    HDC hdc = GetDC(hwnd);
+    RECT rect;
+    GetClientRect(hwnd, &rect);
+    int maxWidth = rect.right - 20;
+    if (maxWidth < 1) maxWidth = 1;
+
+    int totalHeight = renderer.GetTotalHeight(hdc, table, maxWidth) + 20; // 附加些许底边距防止紧贴
+    ReleaseDC(hwnd, hdc);
+
+    SCROLLINFO si = {};
+    si.cbSize = sizeof(SCROLLINFO);
+    si.fMask = SIF_RANGE | SIF_PAGE;
+    si.nMin = 0;
+    si.nMax = totalHeight;
+    si.nPage = rect.bottom;
+    SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
+
+    int maxScrollPos = si.nMax - si.nPage + 1;
+    if (maxScrollPos < 0) maxScrollPos = 0;
+    if (scrollY > maxScrollPos) scrollY = maxScrollPos;
+    if (scrollY < 0) scrollY = 0;
+
+    si.fMask = SIF_POS;
+    si.nPos = scrollY;
+    SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
+}
+
+void EnsureCursorVisible(HWND hwnd, const PieceTable& table, TextRenderer& renderer, int cursorPos, int& scrollY) {
     HDC hdc = GetDC(hwnd);
     RECT rect;
     GetClientRect(hwnd, &rect);
     int maxWidth = rect.right - 20;
     if (maxWidth < 1) maxWidth = 1;
     
+    // 探测相对源点的绝对Y坐标
     POINT pt = renderer.GetCursorCoordinate(hdc, table, 10, 10, maxWidth, cursorPos);
+    int lineHeight = renderer.GetLineHeight(hdc);
+    ReleaseDC(hwnd, hdc);
+
+    bool needsScroll = false;
+    int oldScroll = scrollY;
+    
+    if (pt.y < scrollY) {
+        scrollY = pt.y - 10;
+        if (scrollY < 0) scrollY = 0;
+        needsScroll = true;
+    } else if (pt.y + lineHeight > scrollY + rect.bottom) {
+        scrollY = pt.y + lineHeight - rect.bottom + 10;
+        needsScroll = true;
+    }
+
+    if (needsScroll) {
+        SCROLLINFO si = {};
+        si.cbSize = sizeof(SCROLLINFO);
+        si.fMask = SIF_ALL;
+        GetScrollInfo(hwnd, SB_VERT, &si);
+        
+        int maxScrollPos = si.nMax - si.nPage + 1;
+        if (maxScrollPos < 0) maxScrollPos = 0;
+        if (scrollY > maxScrollPos) scrollY = maxScrollPos;
+        
+        si.fMask = SIF_POS;
+        si.nPos = scrollY;
+        SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
+        
+        int dy = oldScroll - scrollY;
+        ScrollWindowEx(hwnd, 0, dy, nullptr, nullptr, nullptr, nullptr, SW_INVALIDATE | SW_ERASE);
+    }
+}
+
+void UpdateCaretPosition(HWND hwnd, const PieceTable& table, TextRenderer& renderer, int cursorPos, int scrollY) {
+    HDC hdc = GetDC(hwnd);
+    RECT rect;
+    GetClientRect(hwnd, &rect);
+    int maxWidth = rect.right - 20;
+    if (maxWidth < 1) maxWidth = 1;
+    
+    POINT pt = renderer.GetCursorCoordinate(hdc, table, 10, 10 - scrollY, maxWidth, cursorPos);
     SetCaretPos(pt.x, pt.y);
     ReleaseDC(hwnd, hdc);
 }
@@ -22,6 +93,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     static PieceTable table;
     static TextRenderer renderer;
     static int cursorPos = 0;
+    static int scrollY = 0;
     
     switch (msg) {
     case WM_CREATE:
@@ -36,7 +108,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         int lineHeight = renderer.GetLineHeight(hdc);
         ReleaseDC(hwnd, hdc);
         CreateCaret(hwnd, nullptr, 2, lineHeight);
-        UpdateCaretPosition(hwnd, table, renderer, cursorPos);
+        UpdateCaretPosition(hwnd, table, renderer, cursorPos, scrollY);
         ShowCaret(hwnd);
         return 0;
     }
@@ -46,7 +118,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     }
     case WM_SIZE: {
-        UpdateCaretPosition(hwnd, table, renderer, cursorPos);
+        UpdateScrollInfo(hwnd, table, renderer, scrollY);
+        UpdateCaretPosition(hwnd, table, renderer, cursorPos, scrollY);
         InvalidateRect(hwnd, nullptr, TRUE);
         return 0;
     }
@@ -70,13 +143,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             GetClientRect(hwnd, &rect);
             int maxWidth = rect.right - 20;
             if (maxWidth < 1) maxWidth = 1;
-            POINT pt = renderer.GetCursorCoordinate(hdc, table, 10, 10, maxWidth, cursorPos);
+            POINT pt = renderer.GetCursorCoordinate(hdc, table, 10, 10 - scrollY, maxWidth, cursorPos);
             int lineHeight = renderer.GetLineHeight(hdc);
             
             if (wParam == VK_UP) pt.y -= lineHeight;
             else pt.y += lineHeight;
             
-            cursorPos = renderer.GetPosFromCoordinate(hdc, table, 10, 10, maxWidth, pt.x, pt.y);
+            cursorPos = renderer.GetPosFromCoordinate(hdc, table, 10, 10 - scrollY, maxWidth, pt.x, pt.y);
             ReleaseDC(hwnd, hdc);
             moved = true;
         } else if (wParam == VK_HOME) {
@@ -87,7 +160,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             moved = true;
         }
         
-        if (moved) UpdateCaretPosition(hwnd, table, renderer, cursorPos);
+        if (moved) {
+            EnsureCursorVisible(hwnd, table, renderer, cursorPos, scrollY);
+            UpdateCaretPosition(hwnd, table, renderer, cursorPos, scrollY);
+        }
         return 0;
     }
     case WM_CHAR: {
@@ -95,21 +171,102 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (cursorPos > 0) {
                 table.erase(cursorPos - 1, 1);
                 cursorPos--;
-                UpdateCaretPosition(hwnd, table, renderer, cursorPos);
+                UpdateScrollInfo(hwnd, table, renderer, scrollY);
+                EnsureCursorVisible(hwnd, table, renderer, cursorPos, scrollY);
+                UpdateCaretPosition(hwnd, table, renderer, cursorPos, scrollY);
                 InvalidateRect(hwnd, nullptr, TRUE);
             }
         } else if (wParam == VK_RETURN) {
             table.insert(cursorPos, "\n");
             cursorPos++;
-            UpdateCaretPosition(hwnd, table, renderer, cursorPos);
+            UpdateScrollInfo(hwnd, table, renderer, scrollY);
+            EnsureCursorVisible(hwnd, table, renderer, cursorPos, scrollY);
+            UpdateCaretPosition(hwnd, table, renderer, cursorPos, scrollY);
             InvalidateRect(hwnd, nullptr, TRUE);
         } else if (wParam >= 32 && wParam <= 255) { 
             char c = (char)wParam;
             std::string s(1, c);
             table.insert(cursorPos, s);
             cursorPos++;
-            UpdateCaretPosition(hwnd, table, renderer, cursorPos);
+            UpdateScrollInfo(hwnd, table, renderer, scrollY);
+            EnsureCursorVisible(hwnd, table, renderer, cursorPos, scrollY);
+            UpdateCaretPosition(hwnd, table, renderer, cursorPos, scrollY);
             InvalidateRect(hwnd, nullptr, TRUE);
+        }
+        return 0;
+    }
+    case WM_VSCROLL: {
+        SCROLLINFO si = {};
+        si.cbSize = sizeof(SCROLLINFO);
+        si.fMask = SIF_ALL;
+        GetScrollInfo(hwnd, SB_VERT, &si);
+        
+        int yPos = si.nPos;
+        int oldYPos = yPos;
+        
+        switch (LOWORD(wParam)) {
+            case SB_TOP: yPos = si.nMin; break;
+            case SB_BOTTOM: yPos = si.nMax; break;
+            case SB_LINEUP: yPos -= 20; break;
+            case SB_LINEDOWN: yPos += 20; break;
+            case SB_PAGEUP: yPos -= si.nPage; break;
+            case SB_PAGEDOWN: yPos += si.nPage; break;
+            case SB_THUMBTRACK:
+            case SB_THUMBPOSITION: 
+                yPos = si.nTrackPos; 
+                break;
+        }
+        
+        // 关键计算公式：MaxScrollPos = TotalLines - VisibleLines (以像素近似)
+        int maxScrollPos = si.nMax - si.nPage + 1;
+        if (maxScrollPos < 0) maxScrollPos = 0;
+        if (yPos > maxScrollPos) yPos = maxScrollPos;
+        if (yPos < 0) yPos = 0;
+        
+        if (yPos != oldYPos) {
+            int dy = oldYPos - yPos;
+            scrollY = yPos;
+            
+            si.fMask = SIF_POS;
+            si.nPos = scrollY;
+            SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
+            
+            ScrollWindowEx(hwnd, 0, dy, nullptr, nullptr, nullptr, nullptr, SW_INVALIDATE | SW_ERASE);
+            UpdateCaretPosition(hwnd, table, renderer, cursorPos, scrollY);
+        }
+        return 0;
+    }
+    case WM_MOUSEWHEEL: {
+        int zDelta = GET_WHEEL_DELTA_WPARAM(wParam);
+        int scrollLines = 3;
+        SystemParametersInfo(SPI_GETWHEELSCROLLLINES, 0, &scrollLines, 0);
+        
+        HDC hdc = GetDC(hwnd);
+        int step = renderer.GetLineHeight(hdc) * scrollLines;
+        ReleaseDC(hwnd, hdc);
+
+        SCROLLINFO si = {};
+        si.cbSize = sizeof(SCROLLINFO);
+        si.fMask = SIF_ALL;
+        GetScrollInfo(hwnd, SB_VERT, &si);
+        
+        int yPos = si.nPos - (zDelta / WHEEL_DELTA) * step;
+        
+        int maxScrollPos = si.nMax - si.nPage + 1;
+        if (maxScrollPos < 0) maxScrollPos = 0;
+        if (yPos > maxScrollPos) yPos = maxScrollPos;
+        if (yPos < 0) yPos = 0;
+        
+        if (yPos != si.nPos) {
+            int dy = si.nPos - yPos;
+            scrollY = yPos;
+            
+            si.fMask = SIF_POS;
+            si.nPos = scrollY;
+            SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
+            
+            ScrollWindowEx(hwnd, 0, dy, nullptr, nullptr, nullptr, nullptr, SW_INVALIDATE | SW_ERASE);
+            UpdateCaretPosition(hwnd, table, renderer, cursorPos, scrollY);
         }
         return 0;
     }
@@ -121,7 +278,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         int maxWidth = rect.right - 20;
         if (maxWidth < 1) maxWidth = 1;
         SetBkMode(hdc, TRANSPARENT);
-        renderer.Draw(hdc, table, 10, 10, maxWidth);
+        renderer.Draw(hdc, table, 10, 10 - scrollY, maxWidth);
         EndPaint(hwnd, &ps);
         return 0;
     }
@@ -144,7 +301,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
 
     HWND hwnd = CreateWindowEx(
         0, CLASS_NAME, "TextRenderer Demo",
-        WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
+        WS_OVERLAPPEDWINDOW | WS_VSCROLL, CW_USEDEFAULT, CW_USEDEFAULT,
         800, 600, nullptr, nullptr, hInstance, nullptr);
 
     ShowWindow(hwnd, nCmdShow);
