@@ -101,6 +101,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         "It should automatically wrap words when they exceed the maximum width."
                         "HereIsAVeryLongWordThatShouldBeSplitAcrossLinesAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA."
                         "Also test spaces and\nexplicit newlines.");
+        renderer.InvalidateCache(0);
         cursorPos = table.get_text().length();
         return 0;
     case WM_SETFOCUS: {
@@ -169,6 +170,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_CHAR: {
         if (wParam == VK_BACK) {
             if (cursorPos > 0) {
+                renderer.InvalidateCache(cursorPos - 1);
                 table.erase(cursorPos - 1, 1);
                 cursorPos--;
                 UpdateScrollInfo(hwnd, table, renderer, scrollY);
@@ -177,6 +179,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 InvalidateRect(hwnd, nullptr, TRUE);
             }
         } else if (wParam == VK_RETURN) {
+            renderer.InvalidateCache(cursorPos);
             table.insert(cursorPos, "\n");
             cursorPos++;
             UpdateScrollInfo(hwnd, table, renderer, scrollY);
@@ -186,6 +189,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         } else if (wParam >= 32 && wParam <= 255) { 
             char c = (char)wParam;
             std::string s(1, c);
+            renderer.InvalidateCache(cursorPos);
             table.insert(cursorPos, s);
             cursorPos++;
             UpdateScrollInfo(hwnd, table, renderer, scrollY);
