@@ -102,8 +102,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         "It should automatically wrap words when they exceed the maximum width."
                         "HereIsAVeryLongWordThatShouldBeSplitAcrossLinesAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA."
                         "Also test spaces and\nexplicit newlines.");
-        renderer.InvalidateCache(0);
-        cursorPos = table.get_text().length();
+        renderer.InvalidateCache(table, 0);
+        cursorPos = table.length();
         selectionAnchor = cursorPos;
         return 0;
     case WM_SETFOCUS: {
@@ -127,8 +127,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     }
     case WM_KEYDOWN: {
-        std::string text = table.get_text();
-        int maxPos = (int)text.length();
+        int maxPos = table.length();
         bool moved = false;
         if (wParam == VK_LEFT) {
             if (cursorPos > 0) {
@@ -195,8 +194,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 }
 
                 if (wParam == 0x18) { // 如果是剪切，执行删除
-                    renderer.InvalidateCache(start);
                     table.erase(start, len);
+                    renderer.InvalidateCache(table, start);
                     cursorPos = start;
                     selectionAnchor = cursorPos;
                     UpdateScrollInfo(hwnd, table, renderer, scrollY);
@@ -221,14 +220,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         if (selectionAnchor != cursorPos) {
                             int start = std::min(selectionAnchor, cursorPos);
                             int len = std::abs(selectionAnchor - cursorPos);
-                            renderer.InvalidateCache(start);
                             table.erase(start, len);
+                            renderer.InvalidateCache(table, start);
                             cursorPos = start;
                         }
 
                         // 插入剪贴板内容
-                        renderer.InvalidateCache(cursorPos);
                         table.insert(cursorPos, clipText);
+                        renderer.InvalidateCache(table, cursorPos);
                         cursorPos += clipText.length();
                         selectionAnchor = cursorPos;
 
@@ -248,13 +247,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (selectionAnchor != cursorPos) {
                 int start = std::min(selectionAnchor, cursorPos);
                 int len = std::abs(selectionAnchor - cursorPos);
-                renderer.InvalidateCache(start);
                 table.erase(start, len);
+                renderer.InvalidateCache(table, start);
                 cursorPos = start;
                 selectionAnchor = cursorPos;
             } else if (cursorPos > 0) {
-                renderer.InvalidateCache(cursorPos - 1);
                 table.erase(cursorPos - 1, 1);
+                renderer.InvalidateCache(table, cursorPos - 1);
                 cursorPos--;
                 selectionAnchor = cursorPos;
             }
@@ -271,20 +270,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (selectionAnchor != cursorPos) {
                 int start = std::min(selectionAnchor, cursorPos);
                 int len = std::abs(selectionAnchor - cursorPos);
-                renderer.InvalidateCache(start);
                 table.erase(start, len);
+                renderer.InvalidateCache(table, start);
                 cursorPos = start;
             }
 
             if (wParam == VK_RETURN) {
-                renderer.InvalidateCache(cursorPos);
                 table.insert(cursorPos, "\n");
+                renderer.InvalidateCache(table, cursorPos);
                 cursorPos++;
             } else {
                 char c = (char)wParam;
                 std::string s(1, c);
-                renderer.InvalidateCache(cursorPos);
                 table.insert(cursorPos, s);
+                renderer.InvalidateCache(table, cursorPos);
                 cursorPos++;
             }
             selectionAnchor = cursorPos;
@@ -417,21 +416,39 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         return 0;
     }
+    case WM_ERASEBKGND:
+        return 1; // 告诉系统我们已处理背景，防止闪烁
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
         RECT rect;
         GetClientRect(hwnd, &rect);
+
+        // 双缓冲：创建兼容 DC 和位图
+        HDC memDC = CreateCompatibleDC(hdc);
+        HBITMAP memBitmap = CreateCompatibleBitmap(hdc, rect.right, rect.bottom);
+        HBITMAP oldBitmap = (HBITMAP)SelectObject(memDC, memBitmap);
+
+        // 填充背景
+        FillRect(memDC, &rect, (HBRUSH)(COLOR_WINDOW + 1));
+
         int maxWidth = rect.right - 20;
         if (maxWidth < 1) maxWidth = 1;
-        SetBkMode(hdc, TRANSPARENT);
+        SetBkMode(memDC, TRANSPARENT);
         
         int sStart = -1, sEnd = -1;
         if (selectionAnchor != cursorPos) {
             sStart = std::min(selectionAnchor, cursorPos);
             sEnd = std::max(selectionAnchor, cursorPos);
         }
-        renderer.Draw(hdc, table, 10, 10 - scrollY, maxWidth, sStart, sEnd);
+        renderer.Draw(memDC, table, 10, 10 - scrollY, maxWidth, sStart, sEnd);
+
+        // 将内存内容拷贝到屏幕
+        BitBlt(hdc, 0, 0, rect.right, rect.bottom, memDC, 0, 0, SRCCOPY);
+
+        SelectObject(memDC, oldBitmap);
+        DeleteObject(memBitmap);
+        DeleteDC(memDC);
         EndPaint(hwnd, &ps);
         return 0;
     }

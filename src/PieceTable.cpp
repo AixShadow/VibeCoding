@@ -123,6 +123,12 @@ class PieceTable {
             return result;
         }
 
+        int length() const {
+            int total = 0;
+            for (const auto& p : pieces) total += p.length;
+            return total;
+        }
+
         char char_at(int pos) const {
             int cur = 0;
             for (const auto& p : pieces) {
