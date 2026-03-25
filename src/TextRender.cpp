@@ -134,7 +134,7 @@ class TextRenderer {
             }
         }
 
-        void Draw(HDC hdc, const PieceTable& table, int x, int y, int maxWidth) {
+        void Draw(HDC hdc, const PieceTable& table, int x, int y, int maxWidth, int selStart = -1, int selEnd = -1) {
             std::string text = table.get_text();
             EnsureLayout(hdc, text, maxWidth);
             
@@ -151,18 +151,86 @@ class TextRenderer {
                 [](const LineInfo& line, int targetY) { return line.yPos <= targetY; });
             if (itEnd != lines.end()) ++itEnd;
 
+            COLORREF oldBk = GetBkColor(hdc);
+            COLORREF oldTxt = GetTextColor(hdc);
+            COLORREF selBk = GetSysColor(COLOR_HIGHLIGHT);
+            COLORREF selTxt = GetSysColor(COLOR_HIGHLIGHTTEXT);
+            int oldMode = GetBkMode(hdc);
+
             // 视口剪裁：仅对当前视口高度范围内的 Piece 段执行 DrawText (以行为单位合并输出更疾速)
             for (auto it = itStart; it != itEnd && it != lines.end(); ++it) {
                 int startPos = it->startPos;
                 int endPos = (it + 1 != lines.end()) ? (it + 1)->startPos : (int)text.length();
                 
                 int drawLen = endPos - startPos;
+                bool hasNewline = false;
                 if (drawLen > 0 && text[startPos + drawLen - 1] == '\n') {
                     drawLen--;
+                    hasNewline = true;
                 }
                 
-                if (drawLen > 0) {
-                    TextOutA(hdc, x, y + it->yPos, text.c_str() + startPos, drawLen);
+                int currentX = x;
+                int currentY = y + it->yPos;
+
+                // 检查选区交集
+                int s = -1, e = -1;
+                if (selStart != -1 && selEnd != -1 && selStart < selEnd) {
+                    s = std::max(startPos, selStart);
+                    e = std::min(startPos + drawLen, selEnd);
+                }
+
+                if (s != -1 && s < e) {
+                    // 1. 选区前 (正常显示)
+                    if (startPos < s) {
+                        int len = s - startPos;
+                        TextOutA(hdc, currentX, currentY, text.c_str() + startPos, len);
+                        SIZE sz;
+                        GetTextExtentPoint32A(hdc, text.c_str() + startPos, len, &sz);
+                        currentX += sz.cx;
+                    }
+
+                    // 2. 选区中 (高亮显示)
+                    {
+                        int len = e - s;
+                        SetBkColor(hdc, selBk);
+                        SetTextColor(hdc, selTxt);
+                        SetBkMode(hdc, OPAQUE);
+                        TextOutA(hdc, currentX, currentY, text.c_str() + s, len);
+                        SetBkMode(hdc, oldMode); // 恢复透明模式
+                        SetBkColor(hdc, oldBk);
+                        SetTextColor(hdc, oldTxt);
+                        
+                        SIZE sz;
+                        GetTextExtentPoint32A(hdc, text.c_str() + s, len, &sz);
+                        currentX += sz.cx;
+                    }
+
+                    // 3. 选区后 (正常显示)
+                    if (e < startPos + drawLen) {
+                        int len = (startPos + drawLen) - e;
+                        TextOutA(hdc, currentX, currentY, text.c_str() + e, len);
+                    }
+                } else {
+                    // 无选中内容，直接绘制整行
+                    if (drawLen > 0) {
+                        TextOutA(hdc, currentX, currentY, text.c_str() + startPos, drawLen);
+                    }
+                    // 为了处理换行符高亮，需要计算 currentX
+                    if (hasNewline && selStart <= (startPos + drawLen) && selEnd > (startPos + drawLen)) {
+                         SIZE sz;
+                         GetTextExtentPoint32A(hdc, text.c_str() + startPos, drawLen, &sz);
+                         currentX += sz.cx;
+                    }
+                }
+
+                // 绘制换行符选中效果(光标宽度的色块)
+                if (hasNewline && selStart <= (startPos + drawLen) && selEnd > (startPos + drawLen)) {
+                    SIZE sz;
+                    GetTextExtentPoint32A(hdc, " ", 1, &sz);
+                    RECT r = {currentX, currentY, currentX + sz.cx, currentY + get_line_height(hdc)};
+                    HBRUSH hBrush = CreateSolidBrush(selBk);
+                    FillRect(hdc, &r, hBrush);
+                    DeleteObject(hBrush);
                 }
             }
         }

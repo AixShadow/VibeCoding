@@ -93,6 +93,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     static PieceTable table;
     static TextRenderer renderer;
     static int cursorPos = 0;
+    static int selectionAnchor = 0; // 选区起始点，与 cursorPos 构成选区范围
     static int scrollY = 0;
     
     switch (msg) {
@@ -103,6 +104,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         "Also test spaces and\nexplicit newlines.");
         renderer.InvalidateCache(0);
         cursorPos = table.get_text().length();
+        selectionAnchor = cursorPos;
         return 0;
     case WM_SETFOCUS: {
         HDC hdc = GetDC(hwnd);
@@ -162,12 +164,35 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         
         if (moved) {
+            // 简单的导航逻辑：移动光标时重置选区 (如需 Shift 选择需在此添加判断)
+            if (GetKeyState(VK_SHIFT) >= 0) {
+                selectionAnchor = cursorPos;
+            }
             EnsureCursorVisible(hwnd, table, renderer, cursorPos, scrollY);
             UpdateCaretPosition(hwnd, table, renderer, cursorPos, scrollY);
+            InvalidateRect(hwnd, nullptr, TRUE); // 重绘以更新选区显示
         }
         return 0;
     }
     case WM_CHAR: {
+        // 处理选区替换逻辑
+        if (selectionAnchor != cursorPos) {
+            int start = std::min(selectionAnchor, cursorPos);
+            int end = std::max(selectionAnchor, cursorPos);
+            renderer.InvalidateCache(start);
+            table.erase(start, end - start);
+            cursorPos = start;
+            selectionAnchor = cursorPos; // 选区已删除，重置
+            // 如果是退格键，删除选区后即可结束；如果是普通字符，继续执行插入
+            if (wParam == VK_BACK) {
+                UpdateScrollInfo(hwnd, table, renderer, scrollY);
+                EnsureCursorVisible(hwnd, table, renderer, cursorPos, scrollY);
+                UpdateCaretPosition(hwnd, table, renderer, cursorPos, scrollY);
+                InvalidateRect(hwnd, nullptr, TRUE);
+                return 0; 
+            }
+        }
+
         if (wParam == VK_BACK) {
             if (cursorPos > 0) {
                 renderer.InvalidateCache(cursorPos - 1);
@@ -192,11 +217,59 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             renderer.InvalidateCache(cursorPos);
             table.insert(cursorPos, s);
             cursorPos++;
+            selectionAnchor = cursorPos; // 插入后重置选区锚点
             UpdateScrollInfo(hwnd, table, renderer, scrollY);
             EnsureCursorVisible(hwnd, table, renderer, cursorPos, scrollY);
             UpdateCaretPosition(hwnd, table, renderer, cursorPos, scrollY);
             InvalidateRect(hwnd, nullptr, TRUE);
         }
+        return 0;
+    }
+    case WM_LBUTTONDOWN: {
+        int x = LOWORD(lParam);
+        int y = HIWORD(lParam);
+        HDC hdc = GetDC(hwnd);
+        RECT rect;
+        GetClientRect(hwnd, &rect);
+        int maxWidth = rect.right - 20;
+        if (maxWidth < 1) maxWidth = 1;
+
+        // 点击时更新光标位置并重置选区起点
+        cursorPos = renderer.GetPosFromCoordinate(hdc, table, 10, 10 - scrollY, maxWidth, x, y);
+        // 如果按住 Shift，则保留 anchor 扩展选区，否则重置
+        if (GetKeyState(VK_SHIFT) >= 0) {
+            selectionAnchor = cursorPos;
+        }
+        
+        ReleaseDC(hwnd, hdc);
+        
+        SetCapture(hwnd); // 捕获鼠标以便拖拽到窗口外
+        UpdateCaretPosition(hwnd, table, renderer, cursorPos, scrollY);
+        InvalidateRect(hwnd, nullptr, TRUE);
+        return 0;
+    }
+    case WM_MOUSEMOVE: {
+        if (wParam & MK_LBUTTON) { // 鼠标左键拖拽中
+            int x = (short)LOWORD(lParam); // 转为 short 以处理负坐标
+            int y = (short)HIWORD(lParam);
+            HDC hdc = GetDC(hwnd);
+            RECT rect;
+            GetClientRect(hwnd, &rect);
+            int maxWidth = rect.right - 20;
+            if (maxWidth < 1) maxWidth = 1;
+
+            // 拖拽时只更新 cursorPos，selectionAnchor 保持不变，从而形成选区
+            cursorPos = renderer.GetPosFromCoordinate(hdc, table, 10, 10 - scrollY, maxWidth, x, y);
+            ReleaseDC(hwnd, hdc);
+
+            EnsureCursorVisible(hwnd, table, renderer, cursorPos, scrollY); // 支持拖拽自动滚动
+            UpdateCaretPosition(hwnd, table, renderer, cursorPos, scrollY);
+            InvalidateRect(hwnd, nullptr, TRUE);
+        }
+        return 0;
+    }
+    case WM_LBUTTONUP: {
+        ReleaseCapture();
         return 0;
     }
     case WM_VSCROLL: {
@@ -282,7 +355,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         int maxWidth = rect.right - 20;
         if (maxWidth < 1) maxWidth = 1;
         SetBkMode(hdc, TRANSPARENT);
-        renderer.Draw(hdc, table, 10, 10 - scrollY, maxWidth);
+        
+        int sStart = -1, sEnd = -1;
+        if (selectionAnchor != cursorPos) {
+            sStart = std::min(selectionAnchor, cursorPos);
+            sEnd = std::max(selectionAnchor, cursorPos);
+        }
+        renderer.Draw(hdc, table, 10, 10 - scrollY, maxWidth, sStart, sEnd);
         EndPaint(hwnd, &ps);
         return 0;
     }
