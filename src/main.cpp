@@ -175,49 +175,119 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     }
     case WM_CHAR: {
-        // 处理选区替换逻辑
-        if (selectionAnchor != cursorPos) {
-            int start = std::min(selectionAnchor, cursorPos);
-            int end = std::max(selectionAnchor, cursorPos);
-            renderer.InvalidateCache(start);
-            table.erase(start, end - start);
-            cursorPos = start;
-            selectionAnchor = cursorPos; // 选区已删除，重置
-            // 如果是退格键，删除选区后即可结束；如果是普通字符，继续执行插入
-            if (wParam == VK_BACK) {
-                UpdateScrollInfo(hwnd, table, renderer, scrollY);
-                EnsureCursorVisible(hwnd, table, renderer, cursorPos, scrollY);
-                UpdateCaretPosition(hwnd, table, renderer, cursorPos, scrollY);
-                InvalidateRect(hwnd, nullptr, TRUE);
-                return 0; 
+        // 1. 优先处理快捷键指令 (Ctrl+C, Ctrl+V, Ctrl+X)
+        if (wParam == 0x03 || wParam == 0x18) { // Ctrl+C (3) 或 Ctrl+X (24)
+            if (selectionAnchor != cursorPos) {
+                int start = std::min(selectionAnchor, cursorPos);
+                int len = std::abs(selectionAnchor - cursorPos);
+                std::string selectedText = table.get_text_range(start, len);
+
+                if (OpenClipboard(hwnd)) {
+                    EmptyClipboard();
+                    HGLOBAL hGlob = GlobalAlloc(GMEM_MOVEABLE, selectedText.size() + 1);
+                    if (hGlob) {
+                        char* pBuf = (char*)GlobalLock(hGlob);
+                        memcpy(pBuf, selectedText.c_str(), selectedText.size() + 1);
+                        GlobalUnlock(hGlob);
+                        SetClipboardData(CF_TEXT, hGlob);
+                    }
+                    CloseClipboard();
+                }
+
+                if (wParam == 0x18) { // 如果是剪切，执行删除
+                    renderer.InvalidateCache(start);
+                    table.erase(start, len);
+                    cursorPos = start;
+                    selectionAnchor = cursorPos;
+                    UpdateScrollInfo(hwnd, table, renderer, scrollY);
+                    EnsureCursorVisible(hwnd, table, renderer, cursorPos, scrollY);
+                    UpdateCaretPosition(hwnd, table, renderer, cursorPos, scrollY);
+                    InvalidateRect(hwnd, nullptr, TRUE);
+                }
             }
+            return 0;
         }
 
+        if (wParam == 0x16) { // Ctrl+V (22)
+            if (OpenClipboard(hwnd)) {
+                HANDLE hData = GetClipboardData(CF_TEXT);
+                if (hData) {
+                    char* pText = (char*)GlobalLock(hData);
+                    if (pText) {
+                        std::string clipText(pText);
+                        GlobalUnlock(hData);
+
+                        // 如果有选区，先删除选区
+                        if (selectionAnchor != cursorPos) {
+                            int start = std::min(selectionAnchor, cursorPos);
+                            int len = std::abs(selectionAnchor - cursorPos);
+                            renderer.InvalidateCache(start);
+                            table.erase(start, len);
+                            cursorPos = start;
+                        }
+
+                        // 插入剪贴板内容
+                        renderer.InvalidateCache(cursorPos);
+                        table.insert(cursorPos, clipText);
+                        cursorPos += clipText.length();
+                        selectionAnchor = cursorPos;
+
+                        UpdateScrollInfo(hwnd, table, renderer, scrollY);
+                        EnsureCursorVisible(hwnd, table, renderer, cursorPos, scrollY);
+                        UpdateCaretPosition(hwnd, table, renderer, cursorPos, scrollY);
+                        InvalidateRect(hwnd, nullptr, TRUE);
+                    }
+                }
+                CloseClipboard();
+            }
+            return 0;
+        }
+
+        // 2. 处理退格键 (VK_BACK)
         if (wParam == VK_BACK) {
-            if (cursorPos > 0) {
+            if (selectionAnchor != cursorPos) {
+                int start = std::min(selectionAnchor, cursorPos);
+                int len = std::abs(selectionAnchor - cursorPos);
+                renderer.InvalidateCache(start);
+                table.erase(start, len);
+                cursorPos = start;
+                selectionAnchor = cursorPos;
+            } else if (cursorPos > 0) {
                 renderer.InvalidateCache(cursorPos - 1);
                 table.erase(cursorPos - 1, 1);
                 cursorPos--;
-                UpdateScrollInfo(hwnd, table, renderer, scrollY);
-                EnsureCursorVisible(hwnd, table, renderer, cursorPos, scrollY);
-                UpdateCaretPosition(hwnd, table, renderer, cursorPos, scrollY);
-                InvalidateRect(hwnd, nullptr, TRUE);
+                selectionAnchor = cursorPos;
             }
-        } else if (wParam == VK_RETURN) {
-            renderer.InvalidateCache(cursorPos);
-            table.insert(cursorPos, "\n");
-            cursorPos++;
             UpdateScrollInfo(hwnd, table, renderer, scrollY);
             EnsureCursorVisible(hwnd, table, renderer, cursorPos, scrollY);
             UpdateCaretPosition(hwnd, table, renderer, cursorPos, scrollY);
             InvalidateRect(hwnd, nullptr, TRUE);
-        } else if (wParam >= 32 && wParam <= 255) { 
-            char c = (char)wParam;
-            std::string s(1, c);
-            renderer.InvalidateCache(cursorPos);
-            table.insert(cursorPos, s);
-            cursorPos++;
-            selectionAnchor = cursorPos; // 插入后重置选区锚点
+            return 0;
+        }
+
+        // 3. 处理常规字符输入
+        if (wParam >= 32 || wParam == VK_RETURN) { // 32是空格，包含回车
+            // 如果有选区，输入新字符前先删除旧选区
+            if (selectionAnchor != cursorPos) {
+                int start = std::min(selectionAnchor, cursorPos);
+                int len = std::abs(selectionAnchor - cursorPos);
+                renderer.InvalidateCache(start);
+                table.erase(start, len);
+                cursorPos = start;
+            }
+
+            if (wParam == VK_RETURN) {
+                renderer.InvalidateCache(cursorPos);
+                table.insert(cursorPos, "\n");
+                cursorPos++;
+            } else {
+                char c = (char)wParam;
+                std::string s(1, c);
+                renderer.InvalidateCache(cursorPos);
+                table.insert(cursorPos, s);
+                cursorPos++;
+            }
+            selectionAnchor = cursorPos;
             UpdateScrollInfo(hwnd, table, renderer, scrollY);
             EnsureCursorVisible(hwnd, table, renderer, cursorPos, scrollY);
             UpdateCaretPosition(hwnd, table, renderer, cursorPos, scrollY);

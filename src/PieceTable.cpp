@@ -99,6 +99,30 @@ class PieceTable {
             return result;
         }
     
+        std::string get_text_range(int pos, int len) const {
+            if (len <= 0) return "";
+            std::string result;
+            int cur = 0;
+            int remaining = len;
+            for (const auto& p : pieces) {
+                if (remaining <= 0) break;
+                int piece_end = cur + p.length;
+                if (piece_end > pos) {
+                    // 计算当前 piece 中需要提取的起始位置和长度
+                    int offset_in_piece = std::max(0, pos - cur);
+                    int take = std::min(p.length - offset_in_piece, remaining);
+                    
+                    const std::string& buf = (p.buffer == BufferKind::Original ? original_buffer : add_buffer);
+                    result.append(buf.substr(p.offset + offset_in_piece, take));
+                    
+                    remaining -= take;
+                    pos += take;
+                }
+                cur = piece_end;
+            }
+            return result;
+        }
+
         char char_at(int pos) const {
             int cur = 0;
             for (const auto& p : pieces) {
