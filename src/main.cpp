@@ -363,7 +363,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 break;
         }
         
-        // 关键计算公式：MaxScrollPos = TotalLines - VisibleLines (以像素近似)
+        // 计算公式：MaxScrollPos = TotalLines - VisibleLines (以像素近似)
         int maxScrollPos = si.nMax - si.nPage + 1;
         if (maxScrollPos < 0) maxScrollPos = 0;
         if (yPos > maxScrollPos) yPos = maxScrollPos;
