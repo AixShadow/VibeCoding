@@ -245,6 +245,7 @@ class TextRenderer {
             int lineHeight = get_line_height(hdc);
             return lines.back().yPos + lineHeight;
         }
+        
 
         POINT GetCursorCoordinate(HDC hdc, const PieceTable& table, int x, int y, int maxWidth, int cursorPos) {
             EnsureLayout(hdc, maxWidth);
