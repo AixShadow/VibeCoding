@@ -2,8 +2,78 @@
 #include <string>
 #include <vector>
 #include <sstream>
+#include <fstream>
+#include <commdlg.h>
 #include "TextRender.cpp"
 
+// 菜单项 ID 定义
+#define ID_FILE_NEW     1001
+#define ID_FILE_OPEN    1002
+#define ID_FILE_SAVE    1003
+#define ID_FILE_SAVEAS  1004
+#define ID_FILE_EXIT    1005
+
+static std::string currentFilePath = "";
+void UpdateScrollInfo(HWND hwnd, const PieceTable& table, TextRenderer& renderer, int& scrollY);
+
+void DoFileOpen(HWND hwnd, PieceTable& table, TextRenderer& renderer, int& cursorPos, int& selectionAnchor, int& scrollY) {
+    char fileName[MAX_PATH] = "";
+    OPENFILENAMEA ofn = {0};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = hwnd;
+    ofn.lpstrFilter = "Text Files (*.txt)\0*.txt\0All Files (*.*)\0*.*\0";
+    ofn.lpstrFile = fileName;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+
+    if (GetOpenFileNameA(&ofn)) {
+        std::ifstream ifs(ofn.lpstrFile, std::ios::binary);
+        if (ifs) {
+            std::string content((std::istreambuf_iterator<char>(ifs)), (std::istreambuf_iterator<char>()));
+            table.reset(content);
+            renderer.InvalidateCache(table, 0);
+            
+            currentFilePath = ofn.lpstrFile;
+            cursorPos = 0;
+            selectionAnchor = 0;
+            scrollY = 0;
+
+            UpdateScrollInfo(hwnd, table, renderer, scrollY);
+            InvalidateRect(hwnd, nullptr, TRUE);
+            
+            std::string title = "VibeCoding - " + currentFilePath;
+            SetWindowTextA(hwnd, title.c_str());
+        }
+    }
+}
+
+void DoFileSave(HWND hwnd, const PieceTable& table, bool saveAs) {
+    char fileName[MAX_PATH] = "";
+    if (!saveAs && !currentFilePath.empty()) {
+        strcpy_s(fileName, currentFilePath.c_str());
+    } else {
+        OPENFILENAMEA ofn = {0};
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = hwnd;
+        ofn.lpstrFilter = "Text Files (*.txt)\0*.txt\0All Files (*.*)\0*.*\0";
+        ofn.lpstrFile = fileName;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.Flags = OFN_OVERWRITEPROMPT;
+        ofn.lpstrDefExt = "txt";
+
+        if (!GetSaveFileNameA(&ofn)) return;
+    }
+
+    std::ofstream ofs(fileName, std::ios::binary);
+    if (ofs) {
+        std::string text = table.get_text();
+        ofs.write(text.c_str(), text.size());
+        currentFilePath = fileName;
+        
+        std::string title = "VibeCoding - " + currentFilePath;
+        SetWindowTextA(hwnd, title.c_str());
+    }
+}
 
 void UpdateScrollInfo(HWND hwnd, const PieceTable& table, TextRenderer& renderer, int& scrollY) {
     HDC hdc = GetDC(hwnd);
@@ -127,6 +197,23 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     }
     case WM_KEYDOWN: {
+        // 快捷键处理
+        if (GetKeyState(VK_CONTROL) & 0x8000) {
+            if (wParam == 'S') { // Ctrl+S：保存
+                DoFileSave(hwnd, table, false);
+                return 0;
+            } else if (wParam == 'A') { // Ctrl+A：全选
+                cursorPos = table.length();
+                selectionAnchor = 0;
+                UpdateCaretPosition(hwnd, table, renderer, cursorPos, scrollY);
+                InvalidateRect(hwnd, nullptr, TRUE);
+                return 0;
+            } else if (wParam == 'C' || wParam == 'X' || wParam == 'V') {
+                 // 让 WM_CHAR 处理 Ctrl+C/X/V
+                 break;
+            }
+        }
+
         int maxPos = table.length();
         bool moved = false;
         if (wParam == VK_LEFT) {
@@ -452,6 +539,26 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         EndPaint(hwnd, &ps);
         return 0;
     }
+    case WM_COMMAND: {
+        switch (LOWORD(wParam)) {
+        case ID_FILE_NEW:
+            table.reset("");
+            renderer.InvalidateCache(table, 0);
+            cursorPos = 0;
+            selectionAnchor = 0;
+            scrollY = 0;
+            currentFilePath = "";
+            SetWindowTextA(hwnd, "VibeCoding - Untitled");
+            UpdateScrollInfo(hwnd, table, renderer, scrollY);
+            InvalidateRect(hwnd, nullptr, TRUE);
+            break;
+        case ID_FILE_OPEN:   DoFileOpen(hwnd, table, renderer, cursorPos, selectionAnchor, scrollY); break;
+        case ID_FILE_SAVE:   DoFileSave(hwnd, table, false); break;
+        case ID_FILE_SAVEAS: DoFileSave(hwnd, table, true); break;
+        case ID_FILE_EXIT:   DestroyWindow(hwnd); break;
+        }
+        return 0;
+    }
     case WM_DESTROY:
         PostQuitMessage(0);
         return 0;
@@ -469,10 +576,21 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
 
     RegisterClass(&wc);
 
+    // 创建菜单
+    HMENU hMenu = CreateMenu();
+    HMENU hFileMenu = CreateMenu();
+    AppendMenuA(hFileMenu, MF_STRING, ID_FILE_NEW, "New");
+    AppendMenuA(hFileMenu, MF_STRING, ID_FILE_OPEN, "Open...");
+    AppendMenuA(hFileMenu, MF_STRING, ID_FILE_SAVE, "Save");
+    AppendMenuA(hFileMenu, MF_STRING, ID_FILE_SAVEAS, "Save As...");
+    AppendMenuA(hFileMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(hFileMenu, MF_STRING, ID_FILE_EXIT, "Exit");
+    AppendMenuA(hMenu, MF_POPUP, (UINT_PTR)hFileMenu, "File");
+
     HWND hwnd = CreateWindowEx(
         0, CLASS_NAME, "TextRenderer Demo",
         WS_OVERLAPPEDWINDOW | WS_VSCROLL, CW_USEDEFAULT, CW_USEDEFAULT,
-        800, 600, nullptr, nullptr, hInstance, nullptr);
+        800, 600, nullptr, hMenu, hInstance, nullptr);
 
     ShowWindow(hwnd, nCmdShow);
 

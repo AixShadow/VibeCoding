@@ -21,6 +21,15 @@ class PieceTable {
             }
         }
     
+        void reset(const std::string& text) {
+            original_buffer = text;
+            add_buffer.clear();
+            pieces.clear();
+            if (!text.empty()) {
+                pieces.push_back({ BufferKind::Original, 0, (int)text.size() });
+            }
+        }
+
         void insert(int pos, const std::string& text) {
             if (text.empty()) return;
             int add_offset = (int)add_buffer.size();
